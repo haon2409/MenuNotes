@@ -7,34 +7,40 @@ import Combine
 struct Note: Identifiable, Codable, Equatable {
     var id = UUID()
     var title: String
-    var contentData: Data
     var lastModified: Date
-
-    var attributedContent: NSAttributedString {
-        get {
-            (try? NSKeyedUnarchiver.unarchivedObject(
-                ofClass: NSAttributedString.self,
-                from: contentData
-            )) ?? NSAttributedString(string: "")
-        }
-        set {
-            contentData = (try? NSKeyedArchiver.archivedData(
-                withRootObject: newValue,
-                requiringSecureCoding: false
-            )) ?? Data()
-        }
+    
+    // Lưu trữ trực tiếp trên RAM, không dùng computed property với NSKeyedArchiver
+    var attributedContent: NSAttributedString
+    
+    enum CodingKeys: String, CodingKey {
+        case id, title, lastModified, contentData
     }
-
-    init(
-        title: String = "Note mới",
-        content: NSAttributedString = NSAttributedString(string: "")
-    ) {
+    
+    init(title: String = "Note mới", content: NSAttributedString = NSAttributedString(string: "")) {
+        self.id = UUID()
         self.title = title
-        self.contentData = (try? NSKeyedArchiver.archivedData(
-            withRootObject: content,
-            requiringSecureCoding: false
-        )) ?? Data()
         self.lastModified = Date()
+        self.attributedContent = content
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        lastModified = try container.decode(Date.self, forKey: .lastModified)
+        
+        let data = try container.decode(Data.self, forKey: .contentData)
+        attributedContent = (try? NSKeyedUnarchiver.unarchivedObject(ofClass: NSAttributedString.self, from: data)) ?? NSAttributedString(string: "")
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(lastModified, forKey: .lastModified)
+        
+        let data = (try? NSKeyedArchiver.archivedData(withRootObject: attributedContent, requiringSecureCoding: false)) ?? Data()
+        try container.encode(data, forKey: .contentData)
     }
 }
 

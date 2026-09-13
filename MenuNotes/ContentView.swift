@@ -358,12 +358,15 @@ extension NSTextView {
 final class CustomTextView: NSTextView {
     override func resetCursorRects() {
         super.resetCursorRects()
-        
+            
         guard let layoutManager = layoutManager, let textContainer = textContainer else { return }
         let string = self.string as NSString
         let totalLength = string.length
         
         guard totalLength > 0 else { return }
+        
+        // 1. Thêm dòng này: Tránh crash khi chuỗi đã xoá nhưng layout chưa kịp cập nhật glyphs
+        guard layoutManager.numberOfGlyphs > 0 else { return }
         
         var searchRange = NSRange(location: 0, length: totalLength)
         while searchRange.location < totalLength {
@@ -560,7 +563,9 @@ struct RichTextEditor: NSViewRepresentable {
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? NSTextView else { return }
         let currentText = textView.attributedString()
-        guard currentText != text else { return }
+        
+        // 1. Dùng isEqual(to:) để chặn vòng lặp cập nhật vô hạn
+        guard !currentText.isEqual(to: text) else { return }
 
         let currentRange = textView.selectedRange()
         textView.textStorage?.setAttributedString(text)

@@ -50,7 +50,6 @@ final class NoteStore: ObservableObject {
     private var pendingSaveTask: Task<Void, Never>?
     private var terminationObserver: NSObjectProtocol?
     
-    // Tạo đường dẫn lưu file an toàn
     private var storeURL: URL {
         let urls = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
         let appSupportURL = urls[0].appendingPathComponent("MenuNotes")
@@ -79,6 +78,7 @@ final class NoteStore: ObservableObject {
         setupTerminationObserver()
     }
 
+    // Sửa lỗi Concurrency trong deinit
     deinit {
         pendingSaveTask?.cancel()
         if let observer = terminationObserver {
@@ -157,12 +157,10 @@ final class NoteStore: ObservableObject {
 
     private func saveImmediately() {
         guard let data = try? JSONEncoder().encode(notes) else { return }
-        // Lưu ra File System thay vì UserDefaults
         try? data.write(to: storeURL, options: .atomic)
     }
 
     private func load() {
-        // Đọc từ File System
         guard let data = try? Data(contentsOf: storeURL),
               let decoded = try? JSONDecoder().decode([Note].self, from: data) else {
             return
@@ -171,7 +169,6 @@ final class NoteStore: ObservableObject {
     }
 
     private func nextNoteTitle() -> String {
-        // Lấy danh sách các số từ chuỗi "Note X" và tìm số Max
         let numbers = notes.compactMap { note -> Int? in
             let prefix = "Note "
             guard note.title.hasPrefix(prefix),

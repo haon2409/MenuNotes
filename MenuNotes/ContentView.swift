@@ -6,6 +6,42 @@ import Combine
 
 final class EditorContext: ObservableObject {
     weak var textView: NSTextView?
+    
+    @Published var isBold: Bool = false
+    @Published var isItalic: Bool = false
+    @Published var isUnderline: Bool = false
+    @Published var currentColor: NSColor? = nil
+    @Published var currentTextStyle: TextStyle = .body
+    
+    func syncState() {
+        guard let tv = textView else { return }
+        let attrs = tv.typingAttributes
+        
+        if let font = attrs[.font] as? NSFont {
+            let traits = font.fontDescriptor.symbolicTraits
+            isBold = traits.contains(.bold)
+            isItalic = traits.contains(.italic)
+            
+            let size = font.pointSize
+            currentTextStyle = TextStyle.allCases.min(by: { abs($0.size - size) < abs($1.size - size) }) ?? .body
+        } else {
+            isBold = false
+            isItalic = false
+            currentTextStyle = .body
+        }
+        
+        if let underline = attrs[.underlineStyle] as? Int, underline != 0 {
+            isUnderline = true
+        } else {
+            isUnderline = false
+        }
+        
+        if let color = attrs[.foregroundColor] as? NSColor, color != .labelColor {
+            currentColor = color
+        } else {
+            currentColor = nil
+        }
+    }
 }
 
 // MARK: - Content View
@@ -51,22 +87,28 @@ struct ContentView: View {
 struct FormatToolbar: View {
     
     @EnvironmentObject var editorContext: EditorContext
-    
-    @State private var currentTextStyle: TextStyle = .body
     @State private var isColorPopoverPresented = false
-    @State private var selectedColor: NSColor?
 
-    let presetColors: [NSColor] = [
-        .systemPurple, .systemPink, .systemOrange, .systemMint, .systemBlue
+    let presetColors: [(color: NSColor?, title: String)] = [
+        (nil, "Mặc định (Trắng/Đen)"),
+        (.systemPurple, "Purple"),
+        (.systemPink, "Pink"),
+        (.systemOrange, "Orange"),
+        (.systemMint, "Mint"),
+        (.systemBlue, "Blue")
     ]
 
     var body: some View {
         HStack(spacing: 6) {
 
             // MARK: Bold / Italic / Underline
-            FormatButton(symbol: "bold") { applyTrait(.boldFontMask) }
-            FormatButton(symbol: "italic") { applyTrait(.italicFontMask) }
-            FormatButton(symbol: "underline") { toggleUnderline() }
+            FormatButton(symbol: "bold", isActive: editorContext.isBold) {
+                applyTrait(editorContext.isBold ? .unboldFontMask : .boldFontMask)
+            }
+            FormatButton(symbol: "italic", isActive: editorContext.isItalic) {
+                applyTrait(editorContext.isItalic ? .unitalicFontMask : .italicFontMask)
+            }
+            FormatButton(symbol: "underline", isActive: editorContext.isUnderline) { toggleUnderline() }
 
             Divider().frame(height: 16)
 
@@ -74,70 +116,68 @@ struct FormatToolbar: View {
             Button {
                 isColorPopoverPresented.toggle()
             } label: {
-                Image(systemName: "paintpalette").font(.system(size: 13, weight: .medium))
+                Image(systemName: "paintpalette")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(editorContext.currentColor != nil ? Color(editorContext.currentColor!) : .primary)
             }
             .buttonStyle(.plain)
-            .frame(width: 28)
+            .frame(width: 28, height: 24)
             .popover(isPresented: $isColorPopoverPresented, arrowEdge: .bottom) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Button {
-                        selectedColor = nil
-                        applyColor(nil)
-                        isColorPopoverPresented = false
-                    } label: {
-                        Text("Reset (màu hệ thống)")
-                            .font(.system(size: 13))
-                            .foregroundColor(.primary)
-                            .padding(.horizontal, 8).padding(.vertical, 6)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(selectedColor == nil ? Color.accentColor.opacity(0.2) : Color.clear)
-                            .cornerRadius(6)
-                    }
-                    .buttonStyle(.plain)
-
-                    Divider()
-
-                    HStack(spacing: 8) {
-                        ForEach(presetColors, id: \.self) { color in
-                            Button {
-                                selectedColor = color
-                                applyColor(color)
-                                isColorPopoverPresented = false
-                            } label: {
-                                Circle()
-                                    .fill(Color(color))
-                                    .frame(width: 18, height: 18)
-                                    .padding(4)
-                                    .background(selectedColor == color ? Color(color).opacity(0.3) : Color.clear)
-                                    .cornerRadius(6)
-                            }
-                            .buttonStyle(.plain)
+                HStack(spacing: 8) {
+                    ForEach(0..<presetColors.count, id: \.self) { index in
+                        let item = presetColors[index]
+                        Button {
+                            applyColor(item.color)
+                            isColorPopoverPresented = false
+                        } label: {
+                            Circle()
+                                .fill(item.color != nil ? Color(item.color!) : Color.white)
+                                .overlay(
+                                    Circle()
+                                        .stroke(Color.gray.opacity(0.5), lineWidth: item.color == nil ? 1 : 0)
+                                )
+                                .frame(width: 18, height: 18)
+                                .padding(4)
+                                .background(
+                                    (item.color == nil && editorContext.currentColor == nil) || (item.color != nil && editorContext.currentColor == item.color)
+                                    ? Color.accentColor.opacity(0.3)
+                                    : Color.clear
+                                )
+                                .cornerRadius(6)
                         }
+                        .buttonStyle(.plain)
+                        .help(item.title)
                     }
-                    .padding(.horizontal, 4)
                 }
                 .padding(8)
             }
 
-            // MARK: Text Style
+            // MARK: Text Style Dropdown
             Menu {
                 ForEach(TextStyle.allCases, id: \.self) { style in
                     Button {
-                        currentTextStyle = style
                         applyTextStyle(style)
                     } label: {
                         HStack {
-                            if currentTextStyle == style { Image(systemName: "checkmark") }
-                            Text(style.rawValue)
+                            if editorContext.currentTextStyle == style { Image(systemName: "checkmark") }
+                            Text("\(style.rawValue) (\(Int(style.size))pt)")
                                 .font(.system(size: style.size, weight: style.isBold ? .bold : .regular))
                         }
                     }
                 }
             } label: {
-                Image(systemName: "textformat.size").font(.system(size: 13, weight: .medium))
+                HStack(spacing: 2) {
+                    Text("\(editorContext.currentTextStyle.rawValue) \(Int(editorContext.currentTextStyle.size))")
+                        .font(.system(size: 11, weight: .medium))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                }
+                .padding(.horizontal, 4)
+                .frame(height: 24)
+                .background(Color.secondary.opacity(0.12))
+                .cornerRadius(4)
             }
             .menuStyle(.borderlessButton)
-            .frame(width: 28)
 
             Divider().frame(height: 16)
 
@@ -159,6 +199,7 @@ struct FormatToolbar: View {
 
     private func applyTrait(_ trait: NSFontTraitMask) {
         currentTextView()?.changeFontTrait(trait)
+        editorContext.syncState()
     }
 
     private func toggleUnderline() {
@@ -175,6 +216,7 @@ struct FormatToolbar: View {
         typing[.underlineStyle] = newValue
         tv.typingAttributes = typing
         tv.notifyTextDidChange()
+        editorContext.syncState()
     }
 
     private func applyColor(_ color: NSColor?) {
@@ -189,6 +231,7 @@ struct FormatToolbar: View {
         typing[.foregroundColor] = finalColor
         tv.typingAttributes = typing
         tv.notifyTextDidChange()
+        editorContext.syncState()
     }
 
     private func applyTextStyle(_ style: TextStyle) {
@@ -217,6 +260,7 @@ struct FormatToolbar: View {
         }
         tv.typingAttributes = typing
         tv.notifyTextDidChange()
+        editorContext.syncState()
     }
 
     private func insertChecklist() {
@@ -224,13 +268,11 @@ struct FormatToolbar: View {
         let string = tv.string as NSString
         let range = tv.selectedRange()
         
-        // Xác định toàn bộ dòng hiện tại
         let paraRange = string.paragraphRange(for: range)
         let paraString = string.substring(with: paraRange)
         
         tv.undoManager?.beginUndoGrouping()
         
-        // Nếu dòng hiện hành đã là checklist -> Xóa định dạng checklist
         if paraString.hasPrefix("☐ ") || paraString.hasPrefix("☑ ") {
             tv.insertText("", replacementRange: NSRange(location: paraRange.location, length: 2))
             
@@ -240,7 +282,6 @@ struct FormatToolbar: View {
             tv.typingAttributes[.paragraphStyle] = resetStyle
             
         } else {
-            // Nếu là dòng thường -> Biến thành checklist
             let checklist = NSMutableAttributedString(string: "☐ ")
             checklist.addAttribute(.link, value: "checklist://toggle", range: NSRange(location: 0, length: 1))
             checklist.addAttribute(.font, value: NSFont.systemFont(ofSize: 16), range: NSRange(location: 0, length: 1))
@@ -256,6 +297,7 @@ struct FormatToolbar: View {
         }
         
         tv.undoManager?.endUndoGrouping()
+        editorContext.syncState()
     }
 
     private func undo() { currentTextView()?.undoManager?.undo() }
@@ -266,21 +308,23 @@ struct FormatToolbar: View {
 
 struct FormatButton: View {
     let symbol: String
+    var isActive: Bool = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 13, weight: .medium))
-                .frame(width: 26, height: 22)
+                .frame(width: 28, height: 24)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(Color.clear)
+        .background(isActive ? Color.accentColor.opacity(0.2) : Color.clear)
         .cornerRadius(4)
     }
 }
 
-// MARK: - NSTextView Font Helper
+// MARK: - NSTextView Extension (Sửa lỗi missing methods)
 
 extension NSTextView {
     func changeFontTrait(_ trait: NSFontTraitMask) {
@@ -309,7 +353,49 @@ extension NSTextView {
     }
 }
 
-// MARK: - Tab Bar
+// MARK: - Custom TextView
+
+final class CustomTextView: NSTextView {
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        
+        guard let layoutManager = layoutManager, let textContainer = textContainer else { return }
+        let string = self.string as NSString
+        let totalLength = string.length
+        
+        guard totalLength > 0 else { return }
+        
+        var searchRange = NSRange(location: 0, length: totalLength)
+        while searchRange.location < totalLength {
+            let range = string.range(of: "☐", options: [], range: searchRange)
+            let checkedRange = string.range(of: "☑", options: [], range: searchRange)
+            
+            var targetRange: NSRange?
+            if range.location != NSNotFound && checkedRange.location != NSNotFound {
+                targetRange = range.location < checkedRange.location ? range : checkedRange
+            } else if range.location != NSNotFound {
+                targetRange = range
+            } else if checkedRange.location != NSNotFound {
+                targetRange = checkedRange
+            }
+            
+            guard let foundRange = targetRange else { break }
+            
+            let glyphRange = layoutManager.glyphRange(forCharacterRange: foundRange, actualCharacterRange: nil)
+            var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            
+            rect.origin.x += textContainerInset.width
+            rect.origin.y += textContainerInset.height
+            
+            addCursorRect(rect, cursor: NSCursor.arrow)
+            
+            let nextLoc = foundRange.location + foundRange.length
+            searchRange = NSRange(location: nextLoc, length: totalLength - nextLoc)
+        }
+    }
+}
+
+// MARK: - Tab Bar (Sửa lỗi Cannot find 'TabBarView' in scope)
 
 struct TabBarView: View {
     @ObservedObject var store: NoteStore
@@ -441,7 +527,17 @@ struct RichTextEditor: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSTextView.scrollableTextView()
-        let textView = scrollView.documentView as! NSTextView
+        
+        let textView = CustomTextView()
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = true
+        
+        scrollView.documentView = textView
 
         textView.delegate = context.coordinator
         textView.isRichText = true
@@ -455,6 +551,7 @@ struct RichTextEditor: NSViewRepresentable {
 
         DispatchQueue.main.async {
             editorContext.textView = textView
+            editorContext.syncState()
         }
 
         return scrollView
@@ -485,6 +582,12 @@ struct RichTextEditor: NSViewRepresentable {
         var parent: RichTextEditor
         init(_ parent: RichTextEditor) { self.parent = parent }
 
+        func textViewDidChangeSelection(_ notification: Notification) {
+            DispatchQueue.main.async {
+                self.parent.editorContext.syncState()
+            }
+        }
+
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             let newText = textView.attributedString()
@@ -492,30 +595,20 @@ struct RichTextEditor: NSViewRepresentable {
             parent.text = newText
         }
 
-        // Đánh chặn phím (Enter, Xóa, ...)
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-            
-            // Xử lý riêng khi ấn phím Enter (Return)
             if commandSelector == #selector(NSResponder.insertNewline(_:)) {
                 let range = textView.selectedRange()
                 let string = textView.string as NSString
                 let paraRange = string.paragraphRange(for: range)
                 let paraString = string.substring(with: paraRange)
                 
-                // Kiểm tra xem dòng hiện hành có phải là Checklist không
                 if paraString.hasPrefix("☐ ") || paraString.hasPrefix("☑ ") {
-                    
-                    // Cắt bỏ ô checkbox và khoảng trắng để xem người dùng đã gõ chữ gì chưa
                     let trimmed = paraString.dropFirst(2).trimmingCharacters(in: .whitespacesAndNewlines)
                     
                     if trimmed.isEmpty {
-                        // Trạng thái 1: Nhấn Enter trên một Checklist rỗng -> Hủy Checklist
                         textView.undoManager?.beginUndoGrouping()
-                        
-                        // Xóa biểu tượng checkbox hiện tại
                         textView.insertText("", replacementRange: NSRange(location: paraRange.location, length: 2))
                         
-                        // Đặt lại lề về 0 (chuẩn)
                         let resetStyle = NSMutableParagraphStyle()
                         let newParaRange = (textView.string as NSString).paragraphRange(for: textView.selectedRange())
                         textView.textStorage?.addAttribute(.paragraphStyle, value: resetStyle, range: newParaRange)
@@ -525,19 +618,14 @@ struct RichTextEditor: NSViewRepresentable {
                         return true
                         
                     } else {
-                        // Trạng thái 2: Nhấn Enter trên Checklist đang có chữ -> Sinh ra Checklist mới ở dòng tiếp theo
                         textView.undoManager?.beginUndoGrouping()
-                        
-                        // Sinh dòng mới
                         textView.insertText("\n", replacementRange: range)
                         
-                        // Chèn checkbox mới
                         let checklist = NSMutableAttributedString(string: "☐ ")
                         checklist.addAttribute(.link, value: "checklist://toggle", range: NSRange(location: 0, length: 1))
                         checklist.addAttribute(.font, value: NSFont.systemFont(ofSize: 16), range: NSRange(location: 0, length: 1))
                         checklist.addAttribute(.foregroundColor, value: NSColor.labelColor, range: NSRange(location: 0, length: 1))
                         
-                        // Căn lề thụt đầu dòng
                         let paragraph = NSMutableParagraphStyle()
                         paragraph.headIndent = 24
                         paragraph.firstLineHeadIndent = 0
@@ -562,7 +650,6 @@ struct RichTextEditor: NSViewRepresentable {
             return false
         }
         
-        // Đăng ký lịch sử Undo/Redo cho thao tác Tick hộp kiểm
         @objc func toggleChecklist(at charIndex: Int, in textView: NSTextView) {
             guard let textStorage = textView.textStorage else { return }
             let char = (textStorage.string as NSString).substring(with: NSRange(location: charIndex, length: 1))

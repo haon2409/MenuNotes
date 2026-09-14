@@ -9,11 +9,10 @@ struct Note: Identifiable, Codable, Equatable {
     var title: String
     var lastModified: Date
     
-    // Lưu trữ trực tiếp trên RAM, không dùng computed property với NSKeyedArchiver
     var attributedContent: NSAttributedString
     
     enum CodingKeys: String, CodingKey {
-        case id, title, lastModified, contentData
+        case id, title, lastModified, rtfData
     }
     
     init(title: String = "Note mới", content: NSAttributedString = NSAttributedString(string: "")) {
@@ -29,8 +28,16 @@ struct Note: Identifiable, Codable, Equatable {
         title = try container.decode(String.self, forKey: .title)
         lastModified = try container.decode(Date.self, forKey: .lastModified)
         
-        let data = try container.decode(Data.self, forKey: .contentData)
-        attributedContent = (try? NSKeyedUnarchiver.unarchivedObject(ofClass: NSAttributedString.self, from: data)) ?? NSAttributedString(string: "")
+        if let data = try? container.decode(Data.self, forKey: .rtfData),
+           let attrStr = try? NSAttributedString(
+               data: data,
+               options: [.documentType: NSAttributedString.DocumentType.rtfd],
+               documentAttributes: nil
+           ) {
+            attributedContent = attrStr
+        } else {
+            attributedContent = NSAttributedString(string: "")
+        }
     }
     
     func encode(to encoder: Encoder) throws {
@@ -39,8 +46,13 @@ struct Note: Identifiable, Codable, Equatable {
         try container.encode(title, forKey: .title)
         try container.encode(lastModified, forKey: .lastModified)
         
-        let data = (try? NSKeyedArchiver.archivedData(withRootObject: attributedContent, requiringSecureCoding: false)) ?? Data()
-        try container.encode(data, forKey: .contentData)
+        let range = NSRange(location: 0, length: attributedContent.length)
+        let rtfData = (try? attributedContent.data(
+            from: range,
+            documentAttributes: [.documentType: NSAttributedString.DocumentType.rtfd]
+        )) ?? Data()
+        
+        try container.encode(rtfData, forKey: .rtfData)
     }
 }
 
@@ -84,7 +96,6 @@ final class NoteStore: ObservableObject {
         setupTerminationObserver()
     }
 
-    // Sửa lỗi Concurrency trong deinit
     deinit {
         pendingSaveTask?.cancel()
         if let observer = terminationObserver {
@@ -162,8 +173,13 @@ final class NoteStore: ObservableObject {
     }
 
     private func saveImmediately() {
-        guard let data = try? JSONEncoder().encode(notes) else { return }
-        try? data.write(to: storeURL, options: .atomic)
+        let currentNotes = self.notes
+        let url = self.storeURL
+        
+        Task.detached(priority: .background) {
+            guard let data = try? JSONEncoder().encode(currentNotes) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
     }
 
     private func load() {

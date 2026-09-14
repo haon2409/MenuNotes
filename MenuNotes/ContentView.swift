@@ -12,11 +12,10 @@ enum ChecklistUI {
         
         let config: NSImage.SymbolConfiguration
         if isChecked {
-            // Nền vàng cam + dấu ✓ đen
             config = NSImage.SymbolConfiguration(pointSize: font.pointSize + 1, weight: .medium)
                 .applying(.init(paletteColors: [
-                    NSColor.black,                                                    // dấu ✓ đen
-                    NSColor(red: 255/255, green: 204/255, blue: 0/255, alpha: 1)     // nền vàng cam sáng
+                    NSColor.black,
+                    NSColor(red: 255/255, green: 204/255, blue: 0/255, alpha: 1)
                 ]))
         } else {
             config = NSImage.SymbolConfiguration(pointSize: font.pointSize + 1, weight: .regular)
@@ -78,7 +77,6 @@ final class EditorContext: ObservableObject {
             isUnderline = false
         }
         
-        // Lấy chính xác màu hiện tại tại vị trí con trỏ
         if let color = attrs[.foregroundColor] as? NSColor {
             if color.isEqual(to: NSColor.labelColor) || color.isEqual(to: NSColor.textColor) {
                 currentColor = nil
@@ -194,7 +192,7 @@ struct FormatToolbar: View {
                                 .cornerRadius(6)
                         }
                         .buttonStyle(.plain)
-                        .focusable(false) // Thêm dòng này để tắt viền xanh
+                        .focusable(false)
                         .help(item.title)
                     }
                 }
@@ -318,7 +316,6 @@ struct FormatToolbar: View {
         let range = tv.selectedRange()
         let paraRange = string.paragraphRange(for: range)
         
-        // Lấy sẵn Font và Màu sắc đang dùng tại vị trí con trỏ để Checklist đồng bộ theo
         let typingAttrs = tv.typingAttributes
         let currentFont = (typingAttrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: 14)
         let currentColor = (typingAttrs[.foregroundColor] as? NSColor) ?? NSColor.labelColor
@@ -340,7 +337,6 @@ struct FormatToolbar: View {
             tv.typingAttributes[.paragraphStyle] = resetStyle
         } else {
             let checklist = NSMutableAttributedString()
-            // Truyền font và màu hiện tại vào icon checklist
             checklist.append(ChecklistUI.icon(isChecked: false, font: currentFont, color: currentColor))
             checklist.append(NSAttributedString(string: " ", attributes: [.font: currentFont, .foregroundColor: currentColor]))
             
@@ -439,7 +435,6 @@ final class CustomTextView: NSTextView {
                 rect.origin.x += textContainerInset.width
                 rect.origin.y += textContainerInset.height
                 
-                // Mở rộng vùng hover một chút cho dễ trỏ
                 rect = rect.insetBy(dx: -2, dy: -2)
                 
                 addCursorRect(rect, cursor: .pointingHand)
@@ -448,7 +443,6 @@ final class CustomTextView: NSTextView {
         }
     }
     
-    // Gọi lại khi text thay đổi
     override func didChangeText() {
         super.didChangeText()
         window?.invalidateCursorRects(for: self)
@@ -609,11 +603,9 @@ struct RichTextEditor: NSViewRepresentable {
         
         textView.linkTextAttributes = [:]
 
-        // Nền giống Notes
         textView.backgroundColor = NSColor(red: 30/255, green: 30/255, blue: 30/255, alpha: 1)
         textView.drawsBackground = true
 
-        // Select highlight giống Notes (nâu cam mờ, giữ màu chữ gốc)
         textView.selectedTextAttributes = [
             .backgroundColor: NSColor(red: 150/255, green: 112/255, blue: 84/255, alpha: 0.55)
         ]
@@ -627,6 +619,7 @@ struct RichTextEditor: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
+        guard !context.coordinator.isEditing else { return }
         guard let textView = nsView.documentView as? NSTextView else { return }
         let currentText = textView.attributedString()
         
@@ -650,6 +643,8 @@ struct RichTextEditor: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: RichTextEditor
+        var isEditing = false
+
         init(_ parent: RichTextEditor) { self.parent = parent }
 
         func textViewDidChangeSelection(_ notification: Notification) {
@@ -660,9 +655,12 @@ struct RichTextEditor: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
+            isEditing = true
             let newText = textView.attributedString()
-            guard !parent.text.isEqual(to: newText) else { return }
-            parent.text = newText
+            if !parent.text.isEqual(to: newText) {
+                parent.text = newText
+            }
+            isEditing = false
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -696,12 +694,10 @@ struct RichTextEditor: NSViewRepresentable {
                     } else {
                         textView.undoManager?.beginUndoGrouping()
                         
-                        // Lấy font + màu hiện tại để dòng checklist mới đồng bộ style
                         let typingAttrs = textView.typingAttributes
                         let currentFont = (typingAttrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: 14)
                         let currentColor = (typingAttrs[.foregroundColor] as? NSColor) ?? NSColor.labelColor
                         
-                        // Thay thế việc dùng insertText
                         textStorage.replaceCharacters(in: range, with: "\n")
                         
                         let checklist = NSMutableAttributedString()
@@ -721,7 +717,6 @@ struct RichTextEditor: NSViewRepresentable {
                         
                         textView.setSelectedRange(NSRange(location: insertLoc + checklist.length, length: 0))
                         
-                        // Giữ nguyên typingAttributes (font/màu) + cập nhật paragraphStyle
                         var newTyping = typingAttrs
                         newTyping[.paragraphStyle] = paragraph
                         newTyping[.font] = currentFont
@@ -750,7 +745,6 @@ struct RichTextEditor: NSViewRepresentable {
             
             let isChecked = textStorage.attribute(ChecklistUI.attributeKey, at: charIndex, effectiveRange: nil) as? Bool ?? false
             
-            // Giữ nguyên font + màu của icon hiện tại
             let currentFont = (textStorage.attribute(.font, at: charIndex, effectiveRange: nil) as? NSFont)
                 ?? NSFont.systemFont(ofSize: 14)
             let currentColor = (textStorage.attribute(.foregroundColor, at: charIndex, effectiveRange: nil) as? NSColor)

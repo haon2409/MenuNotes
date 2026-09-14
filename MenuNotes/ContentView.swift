@@ -232,10 +232,6 @@ struct FormatToolbar: View {
             FormatButton(symbol: "checklist") { insertChecklist() }
 
             Spacer()
-
-            // MARK: Undo / Redo
-            FormatButton(symbol: "arrow.uturn.backward") { undo() }
-            FormatButton(symbol: "arrow.uturn.forward") { redo() }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
@@ -356,9 +352,6 @@ struct FormatToolbar: View {
         tv.notifyTextDidChange()
         editorContext.syncState()
     }
-
-    private func undo() { currentTextView()?.undoManager?.undo() }
-    private func redo() { currentTextView()?.undoManager?.redo() }
 }
 
 // MARK: - Format Button

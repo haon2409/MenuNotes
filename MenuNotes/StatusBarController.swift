@@ -16,9 +16,9 @@ class StatusBarController {
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView: ContentView())
         
-        // 3. Gán action cho button
+        // 3. Gán icon vẽ dạng Apple Notes App Icon
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "note.text", accessibilityDescription: "MenuNotes")
+            button.image = createNotesAppIcon()
             button.action = #selector(togglePopover(_:))
             button.target = self
         }
@@ -29,6 +29,66 @@ class StatusBarController {
             self.closePopover(event)
         }
         eventMonitor?.start()
+    }
+    
+    deinit {
+        eventMonitor?.stop()
+    }
+    
+    // MARK: - Hàm vẽ Icon Apple Notes bằng Code Vector
+    private func createNotesAppIcon() -> NSImage {
+        let size = NSSize(width: 20, height: 20)
+        let image = NSImage(size: size, flipped: false) { rect in
+            let cornerRadius: CGFloat = 4.5
+            let basePath = NSBezierPath(roundedRect: rect, xRadius: cornerRadius, yRadius: cornerRadius)
+            
+            // 1. Nền trắng chính
+            NSColor.white.setFill()
+            basePath.fill()
+            
+            NSGraphicsContext.current?.saveGraphicsState()
+            basePath.addClip()
+            
+            // 2. Phần nắp màu vàng/cam phía trên
+            let headerHeight: CGFloat = 6.5
+            let headerRect = NSRect(x: 0, y: rect.height - headerHeight, width: rect.width, height: headerHeight)
+            NSColor(red: 254/255, green: 206/255, blue: 20/255, alpha: 1.0).setFill()
+            NSBezierPath(rect: headerRect).fill() // Dùng NSBezierPath thay cho NSRectFill
+            
+            // 3. Đường chỉ kẻ mờ dưới nắp vàng
+            let sepPath = NSBezierPath()
+            sepPath.move(to: NSPoint(x: 0, y: rect.height - headerHeight))
+            sepPath.line(to: NSPoint(x: rect.width, y: rect.height - headerHeight))
+            NSColor.black.withAlphaComponent(0.15).setStroke()
+            sepPath.lineWidth = 0.5
+            sepPath.stroke()
+            
+            // 4. Hai dòng gạch ngang xám trên trang giấy
+            NSColor(white: 0.78, alpha: 1.0).setStroke()
+            
+            let line1 = NSBezierPath()
+            line1.move(to: NSPoint(x: 3.5, y: 9.5))
+            line1.line(to: NSPoint(x: 16.5, y: 9.5))
+            line1.lineWidth = 1.2
+            line1.stroke()
+            
+            let line2 = NSBezierPath()
+            line2.move(to: NSPoint(x: 3.5, y: 5.5))
+            line2.line(to: NSPoint(x: 16.5, y: 5.5))
+            line2.lineWidth = 1.2
+            line2.stroke()
+            
+            NSGraphicsContext.current?.restoreGraphicsState()
+            
+            // 5. Đường viền nét ngoài cùng
+            NSColor.black.withAlphaComponent(0.2).setStroke()
+            basePath.lineWidth = 0.5
+            basePath.stroke()
+            
+            return true
+        }
+        image.isTemplate = false
+        return image
     }
     
     @objc func togglePopover(_ sender: AnyObject?) {
@@ -43,8 +103,6 @@ class StatusBarController {
         if let button = statusItem.button {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             eventMonitor?.start()
-            
-            // Ép cập nhật thời gian hiển thị
             NotificationCenter.default.post(name: .menuNotesDidShow, object: nil)
         }
     }

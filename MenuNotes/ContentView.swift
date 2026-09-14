@@ -9,7 +9,9 @@ enum ChecklistUI {
     
     static func icon(isChecked: Bool, font: NSFont = .systemFont(ofSize: 14), color: NSColor = .labelColor) -> NSAttributedString {
         let symbolName = isChecked ? "checkmark.circle.fill" : "circle"
-        let iconColor = isChecked ? NSColor.controlAccentColor : NSColor.tertiaryLabelColor
+        let iconColor = isChecked
+            ? NSColor(red: 242/255, green: 187/255, blue: 75/255, alpha: 1)  // vàng Notes
+            : NSColor.tertiaryLabelColor
         
         let config = NSImage.SymbolConfiguration(pointSize: font.pointSize, weight: .regular)
             .applying(.init(paletteColors: [iconColor]))
@@ -580,9 +582,13 @@ struct RichTextEditor: NSViewRepresentable {
         
         textView.linkTextAttributes = [:]
 
-        // Giống Notes: chỉ tô nền highlight, giữ nguyên màu chữ gốc
+        // Nền giống Notes
+        textView.backgroundColor = NSColor(red: 30/255, green: 30/255, blue: 30/255, alpha: 1)
+        textView.drawsBackground = true
+
+        // Select highlight giống Notes (nâu cam mờ, giữ màu chữ gốc)
         textView.selectedTextAttributes = [
-            .backgroundColor: NSColor.selectedTextBackgroundColor.withAlphaComponent(0.35)
+            .backgroundColor: NSColor(red: 150/255, green: 112/255, blue: 84/255, alpha: 0.55)
         ]
         
         DispatchQueue.main.async {

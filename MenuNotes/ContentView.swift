@@ -312,6 +312,9 @@ struct FormatToolbar: View {
         let range = tv.selectedRange()
         let paraRange = string.paragraphRange(for: range)
         
+        // Bounds safety
+        guard paraRange.location <= textStorage.length else { return }
+        
         let typingAttrs = tv.typingAttributes
         let currentFont = (typingAttrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: 14)
         let currentColor = (typingAttrs[.foregroundColor] as? NSColor) ?? NSColor.labelColor
@@ -324,12 +327,20 @@ struct FormatToolbar: View {
         tv.undoManager?.beginUndoGrouping()
         
         if hasChecklist {
-            let deleteRange = NSRange(location: paraRange.location, length: 2)
+            // Chỉ xóa khi đủ 2 ký tự (icon + space)
+            let deleteLength = min(2, textStorage.length - paraRange.location)
+            guard deleteLength > 0 else {
+                tv.undoManager?.endUndoGrouping()
+                return
+            }
+            let deleteRange = NSRange(location: paraRange.location, length: deleteLength)
             textStorage.replaceCharacters(in: deleteRange, with: "")
             
             let resetStyle = NSMutableParagraphStyle()
             let newParaRange = (tv.string as NSString).paragraphRange(for: tv.selectedRange())
-            textStorage.addAttribute(.paragraphStyle, value: resetStyle, range: newParaRange)
+            if newParaRange.location + newParaRange.length <= textStorage.length {
+                textStorage.addAttribute(.paragraphStyle, value: resetStyle, range: newParaRange)
+            }
             tv.typingAttributes[.paragraphStyle] = resetStyle
         } else {
             let checklist = NSMutableAttributedString()
@@ -341,10 +352,14 @@ struct FormatToolbar: View {
             paragraph.firstLineHeadIndent = 0
             checklist.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: checklist.length))
             
-            textStorage.insert(checklist, at: paraRange.location)
+            // Insert an toàn
+            let insertLoc = min(paraRange.location, textStorage.length)
+            textStorage.insert(checklist, at: insertLoc)
             
-            let newParaRange = (tv.string as NSString).paragraphRange(for: NSRange(location: paraRange.location, length: checklist.length))
-            textStorage.addAttribute(.paragraphStyle, value: paragraph, range: newParaRange)
+            let newParaRange = (tv.string as NSString).paragraphRange(for: NSRange(location: insertLoc, length: checklist.length))
+            if newParaRange.location + newParaRange.length <= textStorage.length {
+                textStorage.addAttribute(.paragraphStyle, value: paragraph, range: newParaRange)
+            }
             tv.typingAttributes[.paragraphStyle] = paragraph
         }
         
@@ -419,9 +434,15 @@ final class CustomTextView: NSTextView {
         
         var index = 0
         while index < totalLength {
-            var effectiveRange = NSRange()
-            if textStorage.attribute(ChecklistUI.attributeKey, at: index, longestEffectiveRange: &effectiveRange, in: NSRange(location: index, length: totalLength - index)) != nil {
-                
+            var effectiveRange = NSRange(location: 0, length: 0)
+            let attr = textStorage.attribute(
+                ChecklistUI.attributeKey,
+                at: index,
+                longestEffectiveRange: &effectiveRange,
+                in: NSRange(location: index, length: totalLength - index)
+            )
+            
+            if attr != nil, effectiveRange.length > 0, NSMaxRange(effectiveRange) <= totalLength {
                 let glyphRange = layoutManager.glyphRange(forCharacterRange: effectiveRange, actualCharacterRange: nil)
                 var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
                 
@@ -432,7 +453,10 @@ final class CustomTextView: NSTextView {
                 
                 addCursorRect(rect, cursor: .pointingHand)
             }
-            index = NSMaxRange(effectiveRange) > index ? NSMaxRange(effectiveRange) : index + 1
+            
+            // An toàn tránh infinite loop
+            let next = NSMaxRange(effectiveRange)
+            index = next > index ? next : index + 1
         }
     }
     
@@ -546,6 +570,7 @@ struct TabItemView: View {
                     }
                     .buttonStyle(.plain)
                     .opacity(0.5)
+                    .focusable(false)
                 }
             }
         }
@@ -662,7 +687,9 @@ struct RichTextEditor: NSViewRepresentable {
                 let string = textView.string as NSString
                 let paraRange = string.paragraphRange(for: range)
                 
-                guard paraRange.length > 0, let textStorage = textView.textStorage else { return false }
+                guard let textStorage = textView.textStorage,
+                      paraRange.length > 0,
+                      paraRange.location < textStorage.length else { return false }
                 
                 let hasChecklist = textStorage.attribute(ChecklistUI.attributeKey, at: paraRange.location, effectiveRange: nil) != nil
                 
@@ -672,12 +699,19 @@ struct RichTextEditor: NSViewRepresentable {
                     
                     if trimmed.isEmpty {
                         textView.undoManager?.beginUndoGrouping()
-                        let deleteRange = NSRange(location: paraRange.location, length: 2)
+                        let deleteLength = min(2, textStorage.length - paraRange.location)
+                        guard deleteLength > 0 else {
+                            textView.undoManager?.endUndoGrouping()
+                            return true
+                        }
+                        let deleteRange = NSRange(location: paraRange.location, length: deleteLength)
                         textStorage.replaceCharacters(in: deleteRange, with: "")
                         
                         let resetStyle = NSMutableParagraphStyle()
                         let newParaRange = (textView.string as NSString).paragraphRange(for: textView.selectedRange())
-                        textStorage.addAttribute(.paragraphStyle, value: resetStyle, range: newParaRange)
+                        if newParaRange.location + newParaRange.length <= textStorage.length {
+                            textStorage.addAttribute(.paragraphStyle, value: resetStyle, range: newParaRange)
+                        }
                         textView.typingAttributes[.paragraphStyle] = resetStyle
                         
                         textView.undoManager?.endUndoGrouping()
@@ -705,7 +739,7 @@ struct RichTextEditor: NSViewRepresentable {
                         paragraph.firstLineHeadIndent = 0
                         checklist.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: checklist.length))
                         
-                        let insertLoc = range.location + 1
+                        let insertLoc = min(range.location + 1, textStorage.length)
                         textStorage.insert(checklist, at: insertLoc)
                         
                         textView.setSelectedRange(NSRange(location: insertLoc + checklist.length, length: 0))
@@ -734,7 +768,9 @@ struct RichTextEditor: NSViewRepresentable {
         }
         
         @objc func toggleChecklist(at charIndex: Int, in textView: NSTextView) {
-            guard let textStorage = textView.textStorage else { return }
+            guard let textStorage = textView.textStorage,
+                  charIndex >= 0,
+                  charIndex < textStorage.length else { return }
             
             let isChecked = textStorage.attribute(ChecklistUI.attributeKey, at: charIndex, effectiveRange: nil) as? Bool ?? false
             

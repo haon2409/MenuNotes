@@ -172,12 +172,15 @@ final class NoteStore: ObservableObject {
         saveImmediately()
     }
 
+    // FIX QUAN TRỌNG: Encode trên MainActor (tránh concurrent mutate NSAttributedString)
     private func saveImmediately() {
         let currentNotes = self.notes
         let url = self.storeURL
         
+        // Encode RTFD trên main thread → snapshot an toàn
+        guard let data = try? JSONEncoder().encode(currentNotes) else { return }
+        
         Task.detached(priority: .background) {
-            guard let data = try? JSONEncoder().encode(currentNotes) else { return }
             try? data.write(to: url, options: .atomic)
         }
     }

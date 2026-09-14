@@ -580,6 +580,11 @@ struct RichTextEditor: NSViewRepresentable {
         
         textView.linkTextAttributes = [:]
 
+        // Giống Notes: chỉ tô nền highlight, giữ nguyên màu chữ gốc
+        textView.selectedTextAttributes = [
+            .backgroundColor: NSColor.selectedTextBackgroundColor.withAlphaComponent(0.35)
+        ]
+        
         DispatchQueue.main.async {
             editorContext.textView = textView
             editorContext.syncState()

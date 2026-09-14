@@ -78,8 +78,13 @@ final class EditorContext: ObservableObject {
             isUnderline = false
         }
         
-        if let color = attrs[.foregroundColor] as? NSColor, color != .labelColor {
-            currentColor = color
+        // Lấy chính xác màu hiện tại tại vị trí con trỏ
+        if let color = attrs[.foregroundColor] as? NSColor {
+            if color.isEqual(to: NSColor.labelColor) || color.isEqual(to: NSColor.textColor) {
+                currentColor = nil
+            } else {
+                currentColor = color
+            }
         } else {
             currentColor = nil
         }
@@ -158,8 +163,8 @@ struct FormatToolbar: View {
             Button {
                 isColorPopoverPresented.toggle()
             } label: {
-                Image(systemName: "paintpalette")
-                    .font(.system(size: 13, weight: .medium))
+                Image(systemName: "circle.fill")
+                    .font(.system(size: 13))
                     .foregroundColor(editorContext.currentColor != nil ? Color(editorContext.currentColor!) : .primary)
             }
             .buttonStyle(.plain)
@@ -181,13 +186,15 @@ struct FormatToolbar: View {
                                 .frame(width: 18, height: 18)
                                 .padding(4)
                                 .background(
-                                    (item.color == nil && editorContext.currentColor == nil) || (item.color != nil && editorContext.currentColor == item.color)
+                                    (item.color == nil && editorContext.currentColor == nil) ||
+                                    (item.color != nil && editorContext.currentColor != nil && item.color!.isApproximatelyEqual(to: editorContext.currentColor))
                                     ? Color.accentColor.opacity(0.3)
                                     : Color.clear
                                 )
                                 .cornerRadius(6)
                         }
                         .buttonStyle(.plain)
+                        .focusable(false) // Thêm dòng này để tắt viền xanh
                         .help(item.title)
                     }
                 }
@@ -404,6 +411,7 @@ extension NSTextView {
 
     func notifyTextDidChange() {
         NotificationCenter.default.post(name: NSText.didChangeNotification, object: self)
+        window?.invalidateCursorRects(for: self)
     }
 }
 
@@ -413,15 +421,17 @@ final class CustomTextView: NSTextView {
     override func resetCursorRects() {
         super.resetCursorRects()
         
-        guard let layoutManager = layoutManager, let textContainer = textContainer else { return }
-        let totalLength = (self.string as NSString).length
+        guard let layoutManager = layoutManager,
+              let textContainer = textContainer,
+              let textStorage = textStorage else { return }
         
-        guard totalLength > 0, layoutManager.numberOfGlyphs > 0 else { return }
+        let totalLength = textStorage.length
+        guard totalLength > 0 else { return }
         
         var index = 0
         while index < totalLength {
             var effectiveRange = NSRange()
-            if self.textStorage?.attribute(ChecklistUI.attributeKey, at: index, longestEffectiveRange: &effectiveRange, in: NSRange(location: index, length: totalLength - index)) != nil {
+            if textStorage.attribute(ChecklistUI.attributeKey, at: index, longestEffectiveRange: &effectiveRange, in: NSRange(location: index, length: totalLength - index)) != nil {
                 
                 let glyphRange = layoutManager.glyphRange(forCharacterRange: effectiveRange, actualCharacterRange: nil)
                 var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
@@ -429,10 +439,19 @@ final class CustomTextView: NSTextView {
                 rect.origin.x += textContainerInset.width
                 rect.origin.y += textContainerInset.height
                 
-                addCursorRect(rect, cursor: NSCursor.pointingHand)
+                // Mở rộng vùng hover một chút cho dễ trỏ
+                rect = rect.insetBy(dx: -2, dy: -2)
+                
+                addCursorRect(rect, cursor: .pointingHand)
             }
             index = NSMaxRange(effectiveRange) > index ? NSMaxRange(effectiveRange) : index + 1
         }
+    }
+    
+    // Gọi lại khi text thay đổi
+    override func didChangeText() {
+        super.didChangeText()
+        window?.invalidateCursorRects(for: self)
     }
 }
 
@@ -773,5 +792,19 @@ enum TextStyle: String, CaseIterable {
         case .title, .heading, .subheading: return true
         case .body, .subbody: return false
         }
+    }
+}
+
+// MARK: - NSColor Extension
+extension NSColor {
+    func isApproximatelyEqual(to other: NSColor?) -> Bool {
+        guard let other = other else { return false }
+        guard let c1 = usingColorSpace(.sRGB), let c2 = other.usingColorSpace(.sRGB) else {
+            return self == other
+        }
+        return abs(c1.redComponent - c2.redComponent) < 0.01 &&
+               abs(c1.greenComponent - c2.greenComponent) < 0.01 &&
+               abs(c1.blueComponent - c2.blueComponent) < 0.01 &&
+               abs(c1.alphaComponent - c2.alphaComponent) < 0.01
     }
 }

@@ -2,6 +2,38 @@ import SwiftUI
 import AppKit
 import Combine
 
+// MARK: - Checklist Helper
+
+enum ChecklistUI {
+    static let attributeKey = NSAttributedString.Key("isChecklist")
+    
+    static func icon(isChecked: Bool, font: NSFont = .systemFont(ofSize: 14), color: NSColor = .labelColor) -> NSAttributedString {
+        let symbolName = isChecked ? "checkmark.circle.fill" : "circle"
+        let iconColor = isChecked ? NSColor.controlAccentColor : NSColor.tertiaryLabelColor
+        
+        let config = NSImage.SymbolConfiguration(pointSize: font.pointSize, weight: .regular)
+            .applying(.init(paletteColors: [iconColor]))
+        
+        let attachment = NSTextAttachment()
+        if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?.withSymbolConfiguration(config) {
+            attachment.image = image
+            // Cân chỉnh lại độ cao bounding cho khớp với size chữ hiện tại
+            let yOffset = -((font.pointSize - 14) / 2) - 2
+            attachment.bounds = NSRect(x: 0, y: yOffset, width: font.pointSize + 2, height: font.pointSize + 2)
+        }
+        
+        let attrString = NSMutableAttributedString(attachment: attachment)
+        let fullRange = NSRange(location: 0, length: attrString.length)
+        
+        attrString.addAttribute(.font, value: font, range: fullRange)
+        attrString.addAttribute(.foregroundColor, value: color, range: fullRange)
+        attrString.addAttribute(.link, value: "checklist://toggle", range: fullRange)
+        attrString.addAttribute(attributeKey, value: isChecked, range: fullRange)
+        
+        return attrString
+    }
+}
+
 // MARK: - Quản lý Editor theo Environment Context
 
 final class EditorContext: ObservableObject {
@@ -264,39 +296,51 @@ struct FormatToolbar: View {
     }
 
     private func insertChecklist() {
-        guard let tv = currentTextView() else { return }
+        guard let tv = currentTextView(), let textStorage = tv.textStorage else { return }
         let string = tv.string as NSString
         let range = tv.selectedRange()
-        
         let paraRange = string.paragraphRange(for: range)
-        let paraString = string.substring(with: paraRange)
+        
+        // Lấy sẵn Font và Màu sắc đang dùng tại vị trí con trỏ để Checklist đồng bộ theo
+        let typingAttrs = tv.typingAttributes
+        let currentFont = (typingAttrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: 14)
+        let currentColor = (typingAttrs[.foregroundColor] as? NSColor) ?? NSColor.labelColor
+        
+        var hasChecklist = false
+        if paraRange.location < textStorage.length {
+            hasChecklist = textStorage.attribute(ChecklistUI.attributeKey, at: paraRange.location, effectiveRange: nil) != nil
+        }
         
         tv.undoManager?.beginUndoGrouping()
         
-        if paraString.hasPrefix("☐ ") || paraString.hasPrefix("☑ ") {
-            tv.insertText("", replacementRange: NSRange(location: paraRange.location, length: 2))
+        if hasChecklist {
+            let deleteRange = NSRange(location: paraRange.location, length: 2)
+            textStorage.replaceCharacters(in: deleteRange, with: "")
             
             let resetStyle = NSMutableParagraphStyle()
             let newParaRange = (tv.string as NSString).paragraphRange(for: tv.selectedRange())
-            tv.textStorage?.addAttribute(.paragraphStyle, value: resetStyle, range: newParaRange)
+            textStorage.addAttribute(.paragraphStyle, value: resetStyle, range: newParaRange)
             tv.typingAttributes[.paragraphStyle] = resetStyle
-            
         } else {
-            let checklist = NSMutableAttributedString(string: "☐ ")
-            checklist.addAttribute(.link, value: "checklist://toggle", range: NSRange(location: 0, length: 1))
-            checklist.addAttribute(.font, value: NSFont.systemFont(ofSize: 16), range: NSRange(location: 0, length: 1))
-            checklist.addAttribute(.foregroundColor, value: NSColor.labelColor, range: NSRange(location: 0, length: 1))
-
+            let checklist = NSMutableAttributedString()
+            // Truyền font và màu hiện tại vào icon checklist
+            checklist.append(ChecklistUI.icon(isChecked: false, font: currentFont, color: currentColor))
+            checklist.append(NSAttributedString(string: " ", attributes: [.font: currentFont, .foregroundColor: currentColor]))
+            
             let paragraph = NSMutableParagraphStyle()
             paragraph.headIndent = 24
             paragraph.firstLineHeadIndent = 0
+            checklist.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: checklist.length))
             
-            tv.textStorage?.addAttribute(.paragraphStyle, value: paragraph, range: paraRange)
-            tv.insertText(checklist, replacementRange: NSRange(location: paraRange.location, length: 0))
+            textStorage.insert(checklist, at: paraRange.location)
+            
+            let newParaRange = (tv.string as NSString).paragraphRange(for: NSRange(location: paraRange.location, length: checklist.length))
+            textStorage.addAttribute(.paragraphStyle, value: paragraph, range: newParaRange)
             tv.typingAttributes[.paragraphStyle] = paragraph
         }
         
         tv.undoManager?.endUndoGrouping()
+        tv.notifyTextDidChange()
         editorContext.syncState()
     }
 
@@ -324,7 +368,7 @@ struct FormatButton: View {
     }
 }
 
-// MARK: - NSTextView Extension (Sửa lỗi missing methods)
+// MARK: - NSTextView Extension
 
 extension NSTextView {
     func changeFontTrait(_ trait: NSFontTraitMask) {
@@ -358,47 +402,31 @@ extension NSTextView {
 final class CustomTextView: NSTextView {
     override func resetCursorRects() {
         super.resetCursorRects()
-            
+        
         guard let layoutManager = layoutManager, let textContainer = textContainer else { return }
-        let string = self.string as NSString
-        let totalLength = string.length
+        let totalLength = (self.string as NSString).length
         
-        guard totalLength > 0 else { return }
+        guard totalLength > 0, layoutManager.numberOfGlyphs > 0 else { return }
         
-        // 1. Thêm dòng này: Tránh crash khi chuỗi đã xoá nhưng layout chưa kịp cập nhật glyphs
-        guard layoutManager.numberOfGlyphs > 0 else { return }
-        
-        var searchRange = NSRange(location: 0, length: totalLength)
-        while searchRange.location < totalLength {
-            let range = string.range(of: "☐", options: [], range: searchRange)
-            let checkedRange = string.range(of: "☑", options: [], range: searchRange)
-            
-            var targetRange: NSRange?
-            if range.location != NSNotFound && checkedRange.location != NSNotFound {
-                targetRange = range.location < checkedRange.location ? range : checkedRange
-            } else if range.location != NSNotFound {
-                targetRange = range
-            } else if checkedRange.location != NSNotFound {
-                targetRange = checkedRange
+        var index = 0
+        while index < totalLength {
+            var effectiveRange = NSRange()
+            if self.textStorage?.attribute(ChecklistUI.attributeKey, at: index, longestEffectiveRange: &effectiveRange, in: NSRange(location: index, length: totalLength - index)) != nil {
+                
+                let glyphRange = layoutManager.glyphRange(forCharacterRange: effectiveRange, actualCharacterRange: nil)
+                var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+                
+                rect.origin.x += textContainerInset.width
+                rect.origin.y += textContainerInset.height
+                
+                addCursorRect(rect, cursor: NSCursor.pointingHand)
             }
-            
-            guard let foundRange = targetRange else { break }
-            
-            let glyphRange = layoutManager.glyphRange(forCharacterRange: foundRange, actualCharacterRange: nil)
-            var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
-            
-            rect.origin.x += textContainerInset.width
-            rect.origin.y += textContainerInset.height
-            
-            addCursorRect(rect, cursor: NSCursor.arrow)
-            
-            let nextLoc = foundRange.location + foundRange.length
-            searchRange = NSRange(location: nextLoc, length: totalLength - nextLoc)
+            index = NSMaxRange(effectiveRange) > index ? NSMaxRange(effectiveRange) : index + 1
         }
     }
 }
 
-// MARK: - Tab Bar (Sửa lỗi Cannot find 'TabBarView' in scope)
+// MARK: - Tab Bar
 
 struct TabBarView: View {
     @ObservedObject var store: NoteStore
@@ -564,7 +592,6 @@ struct RichTextEditor: NSViewRepresentable {
         guard let textView = nsView.documentView as? NSTextView else { return }
         let currentText = textView.attributedString()
         
-        // 1. Dùng isEqual(to:) để chặn vòng lặp cập nhật vô hạn
         guard !currentText.isEqual(to: text) else { return }
 
         let currentRange = textView.selectedRange()
@@ -596,7 +623,7 @@ struct RichTextEditor: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             let newText = textView.attributedString()
-            guard parent.text != newText else { return }
+            guard !parent.text.isEqual(to: newText) else { return }
             parent.text = newText
         }
 
@@ -605,41 +632,66 @@ struct RichTextEditor: NSViewRepresentable {
                 let range = textView.selectedRange()
                 let string = textView.string as NSString
                 let paraRange = string.paragraphRange(for: range)
-                let paraString = string.substring(with: paraRange)
                 
-                if paraString.hasPrefix("☐ ") || paraString.hasPrefix("☑ ") {
+                guard paraRange.length > 0, let textStorage = textView.textStorage else { return false }
+                
+                let hasChecklist = textStorage.attribute(ChecklistUI.attributeKey, at: paraRange.location, effectiveRange: nil) != nil
+                
+                if hasChecklist {
+                    let paraString = string.substring(with: paraRange)
                     let trimmed = paraString.dropFirst(2).trimmingCharacters(in: .whitespacesAndNewlines)
                     
                     if trimmed.isEmpty {
                         textView.undoManager?.beginUndoGrouping()
-                        textView.insertText("", replacementRange: NSRange(location: paraRange.location, length: 2))
+                        let deleteRange = NSRange(location: paraRange.location, length: 2)
+                        textStorage.replaceCharacters(in: deleteRange, with: "")
                         
                         let resetStyle = NSMutableParagraphStyle()
                         let newParaRange = (textView.string as NSString).paragraphRange(for: textView.selectedRange())
-                        textView.textStorage?.addAttribute(.paragraphStyle, value: resetStyle, range: newParaRange)
+                        textStorage.addAttribute(.paragraphStyle, value: resetStyle, range: newParaRange)
                         textView.typingAttributes[.paragraphStyle] = resetStyle
                         
                         textView.undoManager?.endUndoGrouping()
+                        textView.notifyTextDidChange()
                         return true
                         
                     } else {
                         textView.undoManager?.beginUndoGrouping()
-                        textView.insertText("\n", replacementRange: range)
                         
-                        let checklist = NSMutableAttributedString(string: "☐ ")
-                        checklist.addAttribute(.link, value: "checklist://toggle", range: NSRange(location: 0, length: 1))
-                        checklist.addAttribute(.font, value: NSFont.systemFont(ofSize: 16), range: NSRange(location: 0, length: 1))
-                        checklist.addAttribute(.foregroundColor, value: NSColor.labelColor, range: NSRange(location: 0, length: 1))
+                        // Lấy font + màu hiện tại để dòng checklist mới đồng bộ style
+                        let typingAttrs = textView.typingAttributes
+                        let currentFont = (typingAttrs[.font] as? NSFont) ?? NSFont.systemFont(ofSize: 14)
+                        let currentColor = (typingAttrs[.foregroundColor] as? NSColor) ?? NSColor.labelColor
+                        
+                        // Thay thế việc dùng insertText
+                        textStorage.replaceCharacters(in: range, with: "\n")
+                        
+                        let checklist = NSMutableAttributedString()
+                        checklist.append(ChecklistUI.icon(isChecked: false, font: currentFont, color: currentColor))
+                        checklist.append(NSAttributedString(string: " ", attributes: [
+                            .font: currentFont,
+                            .foregroundColor: currentColor
+                        ]))
                         
                         let paragraph = NSMutableParagraphStyle()
                         paragraph.headIndent = 24
                         paragraph.firstLineHeadIndent = 0
                         checklist.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: checklist.length))
                         
-                        textView.insertText(checklist, replacementRange: textView.selectedRange())
-                        textView.typingAttributes[.paragraphStyle] = paragraph
+                        let insertLoc = range.location + 1
+                        textStorage.insert(checklist, at: insertLoc)
+                        
+                        textView.setSelectedRange(NSRange(location: insertLoc + checklist.length, length: 0))
+                        
+                        // Giữ nguyên typingAttributes (font/màu) + cập nhật paragraphStyle
+                        var newTyping = typingAttrs
+                        newTyping[.paragraphStyle] = paragraph
+                        newTyping[.font] = currentFont
+                        newTyping[.foregroundColor] = currentColor
+                        textView.typingAttributes = newTyping
                         
                         textView.undoManager?.endUndoGrouping()
+                        textView.notifyTextDidChange()
                         return true
                     }
                 }
@@ -657,14 +709,22 @@ struct RichTextEditor: NSViewRepresentable {
         
         @objc func toggleChecklist(at charIndex: Int, in textView: NSTextView) {
             guard let textStorage = textView.textStorage else { return }
-            let char = (textStorage.string as NSString).substring(with: NSRange(location: charIndex, length: 1))
-            let replacement = char == "☐" ? "☑" : "☐"
+            
+            let isChecked = textStorage.attribute(ChecklistUI.attributeKey, at: charIndex, effectiveRange: nil) as? Bool ?? false
+            
+            // Giữ nguyên font + màu của icon hiện tại
+            let currentFont = (textStorage.attribute(.font, at: charIndex, effectiveRange: nil) as? NSFont)
+                ?? NSFont.systemFont(ofSize: 14)
+            let currentColor = (textStorage.attribute(.foregroundColor, at: charIndex, effectiveRange: nil) as? NSColor)
+                ?? NSColor.labelColor
+            
+            let newIcon = ChecklistUI.icon(isChecked: !isChecked, font: currentFont, color: currentColor)
             
             textView.undoManager?.registerUndo(withTarget: self, handler: { target in
                 target.toggleChecklist(at: charIndex, in: textView)
             })
             
-            textStorage.replaceCharacters(in: NSRange(location: charIndex, length: 1), with: replacement)
+            textStorage.replaceCharacters(in: NSRange(location: charIndex, length: 1), with: newIcon)
             textView.notifyTextDidChange()
         }
     }

@@ -9,19 +9,27 @@ enum ChecklistUI {
     
     static func icon(isChecked: Bool, font: NSFont = .systemFont(ofSize: 14), color: NSColor = .labelColor) -> NSAttributedString {
         let symbolName = isChecked ? "checkmark.circle.fill" : "circle"
-        let iconColor = isChecked
-            ? NSColor(red: 242/255, green: 187/255, blue: 75/255, alpha: 1)  // vàng Notes
-            : NSColor.tertiaryLabelColor
         
-        let config = NSImage.SymbolConfiguration(pointSize: font.pointSize, weight: .regular)
-            .applying(.init(paletteColors: [iconColor]))
+        let config: NSImage.SymbolConfiguration
+        if isChecked {
+            // Nền vàng cam + dấu ✓ đen
+            config = NSImage.SymbolConfiguration(pointSize: font.pointSize + 1, weight: .medium)
+                .applying(.init(paletteColors: [
+                    NSColor.black,                                                    // dấu ✓ đen
+                    NSColor(red: 255/255, green: 204/255, blue: 0/255, alpha: 1)     // nền vàng cam sáng
+                ]))
+        } else {
+            config = NSImage.SymbolConfiguration(pointSize: font.pointSize + 1, weight: .regular)
+                .applying(.init(paletteColors: [NSColor.tertiaryLabelColor]))
+        }
         
         let attachment = NSTextAttachment()
-        if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?.withSymbolConfiguration(config) {
+        if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(config) {
             attachment.image = image
-            // Cân chỉnh lại độ cao bounding cho khớp với size chữ hiện tại
-            let yOffset = -((font.pointSize - 14) / 2) - 2
-            attachment.bounds = NSRect(x: 0, y: yOffset, width: font.pointSize + 2, height: font.pointSize + 2)
+            let size = font.pointSize + 3
+            let yOffset = -((font.pointSize - 14) / 2) - 2.5
+            attachment.bounds = NSRect(x: 0, y: yOffset, width: size, height: size)
         }
         
         let attrString = NSMutableAttributedString(attachment: attachment)

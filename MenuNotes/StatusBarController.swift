@@ -37,8 +37,18 @@ class StatusBarController {
     
     // MARK: - Hàm vẽ Icon Apple Notes bằng Code Vector
     private func createNotesAppIcon() -> NSImage {
-        let size = NSSize(width: 20, height: 20)
-        let image = NSImage(size: size, flipped: false) { rect in
+        // Thu nhỏ size tổng thể xuống 18x18 (90% của 20)
+        let size = NSSize(width: 18, height: 18)
+        let image = NSImage(size: size, flipped: false) { _ in
+            NSGraphicsContext.current?.saveGraphicsState()
+            
+            // Tự động scale toàn bộ nét vẽ xuống 90%
+            let transform = NSAffineTransform()
+            transform.scale(by: 0.9)
+            transform.concat()
+            
+            // Giữ nguyên khung tọa độ ảo 20x20 để các thành phần không bị lệch
+            let rect = NSRect(x: 0, y: 0, width: 20, height: 20)
             let cornerRadius: CGFloat = 4.5
             let basePath = NSBezierPath(roundedRect: rect, xRadius: cornerRadius, yRadius: cornerRadius)
             
@@ -53,7 +63,7 @@ class StatusBarController {
             let headerHeight: CGFloat = 6.5
             let headerRect = NSRect(x: 0, y: rect.height - headerHeight, width: rect.width, height: headerHeight)
             NSColor(red: 254/255, green: 206/255, blue: 20/255, alpha: 1.0).setFill()
-            NSBezierPath(rect: headerRect).fill() // Dùng NSBezierPath thay cho NSRectFill
+            NSBezierPath(rect: headerRect).fill()
             
             // 3. Đường chỉ kẻ mờ dưới nắp vàng
             let sepPath = NSBezierPath()
@@ -78,12 +88,14 @@ class StatusBarController {
             line2.lineWidth = 1.2
             line2.stroke()
             
-            NSGraphicsContext.current?.restoreGraphicsState()
+            NSGraphicsContext.current?.restoreGraphicsState() // Phục hồi clip
             
             // 5. Đường viền nét ngoài cùng
             NSColor.black.withAlphaComponent(0.2).setStroke()
             basePath.lineWidth = 0.5
             basePath.stroke()
+            
+            NSGraphicsContext.current?.restoreGraphicsState() // Phục hồi transform
             
             return true
         }

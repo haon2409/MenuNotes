@@ -415,54 +415,6 @@ extension NSTextView {
 
     func notifyTextDidChange() {
         NotificationCenter.default.post(name: NSText.didChangeNotification, object: self)
-        window?.invalidateCursorRects(for: self)
-    }
-}
-
-// MARK: - Custom TextView
-
-final class CustomTextView: NSTextView {
-    override func resetCursorRects() {
-        super.resetCursorRects()
-        
-        guard let layoutManager = layoutManager,
-              let textContainer = textContainer,
-              let textStorage = textStorage else { return }
-        
-        let totalLength = textStorage.length
-        guard totalLength > 0 else { return }
-        
-        var index = 0
-        while index < totalLength {
-            var effectiveRange = NSRange(location: 0, length: 0)
-            let attr = textStorage.attribute(
-                ChecklistUI.attributeKey,
-                at: index,
-                longestEffectiveRange: &effectiveRange,
-                in: NSRange(location: index, length: totalLength - index)
-            )
-            
-            if attr != nil, effectiveRange.length > 0, NSMaxRange(effectiveRange) <= totalLength {
-                let glyphRange = layoutManager.glyphRange(forCharacterRange: effectiveRange, actualCharacterRange: nil)
-                var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
-                
-                rect.origin.x += textContainerInset.width
-                rect.origin.y += textContainerInset.height
-                
-                rect = rect.insetBy(dx: -2, dy: -2)
-                
-                addCursorRect(rect, cursor: .pointingHand)
-            }
-            
-            // An toàn tránh infinite loop
-            let next = NSMaxRange(effectiveRange)
-            index = next > index ? next : index + 1
-        }
-    }
-    
-    override func didChangeText() {
-        super.didChangeText()
-        window?.invalidateCursorRects(for: self)
     }
 }
 
@@ -600,7 +552,7 @@ struct RichTextEditor: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSTextView.scrollableTextView()
         
-        let textView = CustomTextView()
+        let textView = NSTextView() // Sử dụng class chuẩn của macOS
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.isVerticallyResizable = true
@@ -666,6 +618,20 @@ struct RichTextEditor: NSViewRepresentable {
         init(_ parent: RichTextEditor) { self.parent = parent }
 
         func textViewDidChangeSelection(_ notification: Notification) {
+            if let textView = notification.object as? NSTextView,
+               let textStorage = textView.textStorage {
+                let range = textView.selectedRange()
+                
+                // Xóa highlight nếu vô tình bôi đen đúng 1 ký tự checklist
+                if range.length == 1 {
+                    let isChecklist = textStorage.attribute(ChecklistUI.attributeKey, at: range.location, effectiveRange: nil) != nil
+                    if isChecklist {
+                        let safeLocation = min(range.location + 1, textStorage.length)
+                        textView.setSelectedRange(NSRange(location: safeLocation, length: 0))
+                    }
+                }
+            }
+            
             DispatchQueue.main.async {
                 self.parent.editorContext.syncState()
             }
@@ -773,11 +739,8 @@ struct RichTextEditor: NSViewRepresentable {
                   charIndex < textStorage.length else { return }
             
             let isChecked = textStorage.attribute(ChecklistUI.attributeKey, at: charIndex, effectiveRange: nil) as? Bool ?? false
-            
-            let currentFont = (textStorage.attribute(.font, at: charIndex, effectiveRange: nil) as? NSFont)
-                ?? NSFont.systemFont(ofSize: 14)
-            let currentColor = (textStorage.attribute(.foregroundColor, at: charIndex, effectiveRange: nil) as? NSColor)
-                ?? NSColor.labelColor
+            let currentFont = (textStorage.attribute(.font, at: charIndex, effectiveRange: nil) as? NSFont) ?? NSFont.systemFont(ofSize: 14)
+            let currentColor = (textStorage.attribute(.foregroundColor, at: charIndex, effectiveRange: nil) as? NSColor) ?? NSColor.labelColor
             
             let newIcon = ChecklistUI.icon(isChecked: !isChecked, font: currentFont, color: currentColor)
             
@@ -786,7 +749,22 @@ struct RichTextEditor: NSViewRepresentable {
             })
             
             textStorage.replaceCharacters(in: NSRange(location: charIndex, length: 1), with: newIcon)
+            
+            // THÊM DÒNG NÀY: Bỏ trạng thái select sau khi tick
+            textView.setSelectedRange(NSRange(location: min(charIndex + 1, textStorage.length), length: 0))
+            
             textView.notifyTextDidChange()
+        }
+        
+        func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
+            guard let textStorage = view.textStorage, charIndex >= 0, charIndex < textStorage.length else { return menu }
+            
+            let isChecklist = textStorage.attribute(ChecklistUI.attributeKey, at: charIndex, effectiveRange: nil) != nil
+            if isChecklist {
+                return nil // Chặn trình đơn Markup/AutoFill
+            }
+            
+            return menu
         }
     }
 }
